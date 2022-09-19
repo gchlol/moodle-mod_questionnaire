@@ -3358,6 +3358,7 @@ class questionnaire {
                                     }
                                     $modality = strip_tags($contentleft.'|'.$contentright);
                                     $modality = preg_replace("/[\r\n\t]/", ' ', $modality);
+                                    $modality = html_entity_decode($modality); // GCHLOL: Decode HTML entities.
                                 } else {
                                     $contents = questionnaire_choice_values($content);
                                     if ($contents->modname) {
@@ -3367,6 +3368,7 @@ class questionnaire {
                                     } else {
                                         $modality = strip_tags($contents->text);
                                         $modality = preg_replace("/[\r\n\t]/", ' ', $modality);
+                                        $modality = html_entity_decode($modality); // GCHLOL: Decode HTML entities.
                                     }
                                 }
                                 $col = $choice->name.'->'.$modality;
