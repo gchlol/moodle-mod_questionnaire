@@ -535,28 +535,36 @@ function questionnaire_pluginfile($course, $cm, $context, $filearea, $args, $for
     // Finally send the file.
     send_stored_file($file, 0, 0, true); // Download MUST be forced - security!
 }
-/**
- * Adds module specific settings to the settings block
- *
- * @param settings_navigation $settings The settings navigation object
- * @param navigation_node $questionnairenode The node to add module settings to
- *
- * $settings is unused, but API requires it. Suppress PHPMD warning.
- */
-function questionnaire_extend_settings_navigation(settings_navigation $settings,
-        navigation_node $questionnairenode) {
 
-    global $PAGE, $DB, $USER, $CFG;
+/**
+ * Adds module specific settings to the settings block.
+ *
+ * @param settings_navigation $settings Settings navigation object.
+ * @param navigation_node $navigation Node to add module settings to.
+ * @return void
+ * @throws coding_exception
+ * @throws moodle_exception
+ * @noinspection PhpUnused
+ */
+function questionnaire_extend_settings_navigation(settings_navigation $settings, navigation_node $navigation): void {
+    global $DB, $USER, $CFG;
+
     $individualresponse = optional_param('individualresponse', false, PARAM_INT);
     $rid = optional_param('rid', false, PARAM_INT); // Response id.
     $currentgroupid = optional_param('group', 0, PARAM_INT); // Group id.
 
     require_once($CFG->dirroot.'/mod/questionnaire/questionnaire.class.php');
 
-    $context = $PAGE->cm->context;
-    $cmid = $PAGE->cm->id;
-    $cm = $PAGE->cm;
-    $course = $PAGE->course;
+    $page = $settings->get_page();
+    $cm = $page->cm;
+
+    if (!$cm) {
+        return;
+    }
+
+    $context = $cm->context;
+    $cmid = $cm->id;
+    $course = $page->course;
 
     if (! $questionnaire = $DB->get_record("questionnaire", array("id" => $cm->instance))) {
         throw new \moodle_exception('invalidcoursemodule', 'mod_questionnaire');
@@ -582,7 +590,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
 
     // We want to add these new nodes after the Edit settings node, and before the
     // Locally assigned roles node. Of course, both of those are controlled by capabilities.
-    $keys = $questionnairenode->get_children_key_list();
+    $keys = $navigation->get_children_key_list();
     $beforekey = null;
     $i = array_search('modedit', $keys);
     if (($i === false) && array_key_exists(0, $keys)) {
@@ -597,7 +605,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
             new moodle_url($url, array('id' => $cmid)),
             navigation_node::TYPE_SETTING, null, 'advancedsettings',
             new pix_icon('t/edit', ''));
-        $questionnairenode->add_node($node, $beforekey);
+        $navigation->add_node($node, $beforekey);
     }
 
     if (has_capability('mod/questionnaire:editquestions', $context) && $owner) {
@@ -606,7 +614,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
             new moodle_url($url, array('id' => $cmid)),
             navigation_node::TYPE_SETTING, null, 'questions',
             new pix_icon('t/edit', ''));
-        $questionnairenode->add_node($node, $beforekey);
+        $navigation->add_node($node, $beforekey);
     }
 
     if (has_capability('mod/questionnaire:editquestions', $context) && $owner) {
@@ -615,7 +623,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
             new moodle_url($url, array('id' => $cmid)),
             navigation_node::TYPE_SETTING, null, 'feedback',
             new pix_icon('t/edit', ''));
-        $questionnairenode->add_node($node, $beforekey);
+        $navigation->add_node($node, $beforekey);
     }
 
     if (has_capability('mod/questionnaire:preview', $context)) {
@@ -624,7 +632,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
             new moodle_url($url, array('id' => $cmid)),
             navigation_node::TYPE_SETTING, null, 'preview',
             new pix_icon('t/preview', ''));
-        $questionnairenode->add_node($node, $beforekey);
+        $navigation->add_node($node, $beforekey);
     }
 
     if ($questionnaire->user_can_take($USER->id)) {
@@ -638,7 +646,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
         }
         $node = navigation_node::create($text, new moodle_url($url, $args),
             navigation_node::TYPE_SETTING, null, '', new pix_icon('i/info', 'answerquestions'));
-        $questionnairenode->add_node($node, $beforekey);
+        $navigation->add_node($node, $beforekey);
     }
     $usernumresp = $questionnaire->count_submissions($USER->id);
 
@@ -650,7 +658,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
                 'byresponse' => 0, 'action' => 'summary', 'group' => $currentgroupid);
             $node = navigation_node::create(get_string('yourresponses', 'questionnaire'),
                 new moodle_url($url, $urlargs), navigation_node::TYPE_SETTING, null, 'yourresponses');
-            $myreportnode = $questionnairenode->add_node($node, $beforekey);
+            $myreportnode = $navigation->add_node($node, $beforekey);
 
             $urlargs = array('instance' => $questionnaire->id, 'userid' => $USER->id,
                 'byresponse' => 0, 'action' => 'summary', 'group' => $currentgroupid);
@@ -675,7 +683,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
                 'byresponse' => 1, 'action' => 'vresp', 'group' => $currentgroupid);
             $node = navigation_node::create(get_string('yourresponse', 'questionnaire'),
                 new moodle_url($url, $urlargs), navigation_node::TYPE_SETTING, null, 'yourresponse');
-            $myreportnode = $questionnairenode->add_node($node, $beforekey);
+            $myreportnode = $navigation->add_node($node, $beforekey);
         }
     }
 
@@ -687,7 +695,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
         $node = navigation_node::create(get_string('viewallresponses', 'questionnaire'),
             new moodle_url($url, array('instance' => $questionnaire->id, 'action' => 'vall')),
             navigation_node::TYPE_SETTING, null, 'vall');
-        $reportnode = $questionnairenode->add_node($node, $beforekey);
+        $reportnode = $navigation->add_node($node, $beforekey);
 
         if ($questionnaire->capabilities->viewsingleresponse) {
             $summarynode = $reportnode->add(get_string('summary', 'questionnaire'),
@@ -746,7 +754,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
         $node = navigation_node::create(get_string('show_nonrespondents', 'questionnaire'),
             new moodle_url($url, array('id' => $cmid)),
             navigation_node::TYPE_SETTING, null, 'nonrespondents');
-        $questionnairenode->add_node($node, $beforekey);
+        $navigation->add_node($node, $beforekey);
 
     }
 }
