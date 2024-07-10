@@ -16,6 +16,8 @@
 
 namespace mod_questionnaire\question;
 
+use mod_questionnaire\feedback\section;
+
 /**
  * This file contains the parent class for sectiontext question types.
  *
@@ -54,7 +56,45 @@ class sectiontext extends question {
      * True if question type supports feedback options. False by default.
      */
     public function supports_feedback() {
+        return false;
+    }
+
+    /**
+     * True if question provides mobile support.
+     * @return bool
+     */
+    public function supports_mobile() {
         return true;
+    }
+
+    /**
+     * Display on mobile.
+     *
+     * @param int $qnum
+     * @param bool $autonum
+     */
+    public function mobile_question_display($qnum, $autonum = false) {
+        $options = ['noclean' => true, 'para' => false, 'filter' => true,
+            'context' => $this->context, 'overflowdiv' => true];
+        $mobiledata = (object)[
+            'id' => $this->id,
+            'name' => $this->name,
+            'type_id' => $this->type_id,
+            'length' => $this->length,
+            'content' => format_text(file_rewrite_pluginfile_urls($this->content, 'pluginfile.php', $this->context->id,
+                'mod_questionnaire', 'question', $this->id), FORMAT_HTML, $options),
+            'content_stripped' => strip_tags($this->content),
+            'required' => false,
+            'deleted' => $this->deleted,
+            'response_table' => $this->responsetable,
+            'fieldkey' => $this->mobile_fieldkey(),
+            'precise' => $this->precise,
+            'qnum' => '',
+            'errormessage' => get_string('required') . ': ' . $this->name
+        ];
+
+        $mobiledata->issectiontext = true;
+        return $mobiledata;
     }
 
     /**
@@ -68,7 +108,7 @@ class sectiontext extends question {
      * True if the question supports feedback and has valid settings for feedback. Override if the default logic is not enough.
      */
     public function valid_feedback() {
-        return true;
+        return false;
     }
 
     /**
@@ -77,6 +117,14 @@ class sectiontext extends question {
      */
     public function question_template() {
         return 'mod_questionnaire/question_sectionfb';
+    }
+
+    /**
+     * Override and return false if a number should not be rendered for this question in any context.
+     * @return bool
+     */
+    public function is_numbered() {
+        return false;
     }
 
     /**
@@ -96,14 +144,16 @@ class sectiontext extends question {
             return '';
         }
 
-        $fbsections = $DB->get_records('questionnaire_fb_sections', ['surveyid' => $this->surveyid]);
         $filteredsections = [];
 
         // In which section(s) is this question?
-        foreach ($fbsections as $key => $fbsection) {
-            $scorecalculation = unserialize($fbsection->scorecalculation);
-            if (array_key_exists($this->id, $scorecalculation)) {
-                array_push($filteredsections, $fbsection->section);
+        if ($fbsections = $DB->get_records('questionnaire_fb_sections', ['surveyid' => $this->surveyid])) {
+            foreach ($fbsections as $key => $fbsection) {
+                if ($scorecalculation = section::decode_scorecalculation($fbsection->scorecalculation)) {
+                    if (array_key_exists($this->id, $scorecalculation)) {
+                        array_push($filteredsections, $fbsection->section);
+                    }
+                }
             }
         }
 

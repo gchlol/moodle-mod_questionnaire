@@ -53,7 +53,8 @@ function questionnaire_supports($feature) {
             return true;
         case FEATURE_SHOW_DESCRIPTION:
             return true;
-
+        case FEATURE_MOD_PURPOSE:
+            return MOD_PURPOSE_COMMUNICATION;
         default:
             return null;
     }
@@ -239,6 +240,43 @@ function questionnaire_delete_instance($id) {
 }
 
 /**
+ * Add a get_coursemodule_info function in case any questionnaire type wants to add 'extra' information
+ * for the course (see resource).
+ *
+ * Given a course_module object, this function returns any "extra" information that may be needed
+ * when printing this activity in a course listing.  See get_array_of_activities() in course/lib.php.
+ *
+ * @param stdClass $coursemodule The coursemodule object (record).
+ * @return cached_cm_info An object on information that the courses
+ *                        will know about (most noticeably, an icon).
+ */
+function questionnaire_get_coursemodule_info($coursemodule) {
+    global $DB;
+
+    $questionnaire = $DB->get_record('questionnaire',
+        array('id' => $coursemodule->instance), 'id, name, intro, introformat,
+             completionsubmit');
+    if (!$questionnaire) {
+        return null;
+    }
+
+    $info = new cached_cm_info();
+    $info->customdata = (object)[];
+
+    if ($coursemodule->showdescription) {
+        // Convert intro to html. Do not filter cached version, filters run at display time.
+        // Based on the function quiz_get_coursemodule_info() in the quiz module.
+        $info->content = format_module_intro('questionnaire', $questionnaire, $coursemodule->id, false);
+    }
+
+    // Populate the custom completion rules as key => value pairs, but only if the completion mode is 'automatic'.
+    if ($coursemodule->completion == COMPLETION_TRACKING_AUTOMATIC) {
+        $info->customdata->customcompletionrules['completionsubmit'] = $questionnaire->completionsubmit;
+    }
+    return $info;
+}
+
+/**
  * Return a small object with summary information about what a user has done with a given particular instance of this module.
  * Used for user activity reports.
  * $return->time = the time they did it
@@ -342,7 +380,7 @@ function questionnaire_get_user_grades($questionnaire, $userid=0) {
     $sql = "SELECT r.id, u.id AS userid, r.grade AS rawgrade, r.submitted AS dategraded, r.submitted AS datesubmitted
             FROM {user} u, {questionnaire_response} r
             WHERE u.id = r.userid AND r.questionnaireid = $questionnaire->id AND r.complete = 'y' $usersql";
-    return $DB->get_records_sql($sql, $params);
+    return $DB->get_records_sql($sql, $params) ?? [];
 }
 
 /**
@@ -422,12 +460,12 @@ function questionnaire_grade_item_update($questionnaire, $grades = null) {
 
     if ($questionnaire->grade > 0) {
         $params['gradetype'] = GRADE_TYPE_VALUE;
-        $params['grademax']  = $questionnaire->grade;
-        $params['grademin']  = 0;
+        $params['grademax'] = $questionnaire->grade;
+        $params['grademin'] = 0;
 
     } else if ($questionnaire->grade < 0) {
         $params['gradetype'] = GRADE_TYPE_SCALE;
-        $params['scaleid']   = -$questionnaire->grade;
+        $params['scaleid'] = -$questionnaire->grade;
 
     } else if ($questionnaire->grade == 0) { // No Grade..be sure to delete the grade item if it exists.
         $grades = null;
@@ -535,18 +573,15 @@ function questionnaire_pluginfile($course, $cm, $context, $filearea, $args, $for
     // Finally send the file.
     send_stored_file($file, 0, 0, true); // Download MUST be forced - security!
 }
-
 /**
- * Adds module specific settings to the settings block.
+ * Adds module specific settings to the settings block
  *
- * @param settings_navigation $settings Settings navigation object.
- * @param navigation_node $navigation Node to add module settings to.
- * @return void
- * @throws coding_exception
- * @throws moodle_exception
- * @noinspection PhpUnused
+ * @param settings_navigation $settings The settings navigation object
+ * @param navigation_node $questionnairenode The node to add module settings to
+ *
+ * $settings is unused, but API requires it. Suppress PHPMD warning.
  */
-function questionnaire_extend_settings_navigation(settings_navigation $settings, navigation_node $navigation): void {
+function questionnaire_extend_settings_navigation(settings_navigation $settings, navigation_node $questionnairenode) {
     global $DB, $USER, $CFG;
 
     $individualresponse = optional_param('individualresponse', false, PARAM_INT);
@@ -555,16 +590,10 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
 
     require_once($CFG->dirroot.'/mod/questionnaire/questionnaire.class.php');
 
-    $page = $settings->get_page();
-    $cm = $page->cm;
-
-    if (!$cm) {
-        return;
-    }
-
+    $cm = $settings->get_page()->cm;
     $context = $cm->context;
     $cmid = $cm->id;
-    $course = $page->course;
+    $course = $settings->get_page()->course;
 
     if (! $questionnaire = $DB->get_record("questionnaire", array("id" => $cm->instance))) {
         throw new \moodle_exception('invalidcoursemodule', 'mod_questionnaire');
@@ -590,7 +619,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
 
     // We want to add these new nodes after the Edit settings node, and before the
     // Locally assigned roles node. Of course, both of those are controlled by capabilities.
-    $keys = $navigation->get_children_key_list();
+    $keys = $questionnairenode->get_children_key_list();
     $beforekey = null;
     $i = array_search('modedit', $keys);
     if (($i === false) && array_key_exists(0, $keys)) {
@@ -605,7 +634,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
             new moodle_url($url, array('id' => $cmid)),
             navigation_node::TYPE_SETTING, null, 'advancedsettings',
             new pix_icon('t/edit', ''));
-        $navigation->add_node($node, $beforekey);
+        $questionnairenode->add_node($node, $beforekey);
     }
 
     if (has_capability('mod/questionnaire:editquestions', $context) && $owner) {
@@ -614,7 +643,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
             new moodle_url($url, array('id' => $cmid)),
             navigation_node::TYPE_SETTING, null, 'questions',
             new pix_icon('t/edit', ''));
-        $navigation->add_node($node, $beforekey);
+        $questionnairenode->add_node($node, $beforekey);
     }
 
     if (has_capability('mod/questionnaire:editquestions', $context) && $owner) {
@@ -623,7 +652,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
             new moodle_url($url, array('id' => $cmid)),
             navigation_node::TYPE_SETTING, null, 'feedback',
             new pix_icon('t/edit', ''));
-        $navigation->add_node($node, $beforekey);
+        $questionnairenode->add_node($node, $beforekey);
     }
 
     if (has_capability('mod/questionnaire:preview', $context)) {
@@ -632,7 +661,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
             new moodle_url($url, array('id' => $cmid)),
             navigation_node::TYPE_SETTING, null, 'preview',
             new pix_icon('t/preview', ''));
-        $navigation->add_node($node, $beforekey);
+        $questionnairenode->add_node($node, $beforekey);
     }
 
     if ($questionnaire->user_can_take($USER->id)) {
@@ -646,7 +675,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
         }
         $node = navigation_node::create($text, new moodle_url($url, $args),
             navigation_node::TYPE_SETTING, null, '', new pix_icon('i/info', 'answerquestions'));
-        $navigation->add_node($node, $beforekey);
+        $questionnairenode->add_node($node, $beforekey);
     }
     $usernumresp = $questionnaire->count_submissions($USER->id);
 
@@ -658,7 +687,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
                 'byresponse' => 0, 'action' => 'summary', 'group' => $currentgroupid);
             $node = navigation_node::create(get_string('yourresponses', 'questionnaire'),
                 new moodle_url($url, $urlargs), navigation_node::TYPE_SETTING, null, 'yourresponses');
-            $myreportnode = $navigation->add_node($node, $beforekey);
+            $myreportnode = $questionnairenode->add_node($node, $beforekey);
 
             $urlargs = array('instance' => $questionnaire->id, 'userid' => $USER->id,
                 'byresponse' => 0, 'action' => 'summary', 'group' => $currentgroupid);
@@ -683,7 +712,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
                 'byresponse' => 1, 'action' => 'vresp', 'group' => $currentgroupid);
             $node = navigation_node::create(get_string('yourresponse', 'questionnaire'),
                 new moodle_url($url, $urlargs), navigation_node::TYPE_SETTING, null, 'yourresponse');
-            $myreportnode = $navigation->add_node($node, $beforekey);
+            $myreportnode = $questionnairenode->add_node($node, $beforekey);
         }
     }
 
@@ -695,7 +724,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
         $node = navigation_node::create(get_string('viewallresponses', 'questionnaire'),
             new moodle_url($url, array('instance' => $questionnaire->id, 'action' => 'vall')),
             navigation_node::TYPE_SETTING, null, 'vall');
-        $reportnode = $navigation->add_node($node, $beforekey);
+        $reportnode = $questionnairenode->add_node($node, $beforekey);
 
         if ($questionnaire->capabilities->viewsingleresponse) {
             $summarynode = $reportnode->add(get_string('summary', 'questionnaire'),
@@ -754,7 +783,7 @@ function questionnaire_extend_settings_navigation(settings_navigation $settings,
         $node = navigation_node::create(get_string('show_nonrespondents', 'questionnaire'),
             new moodle_url($url, array('id' => $cmid)),
             navigation_node::TYPE_SETTING, null, 'nonrespondents');
-        $navigation->add_node($node, $beforekey);
+        $questionnairenode->add_node($node, $beforekey);
 
     }
 }
@@ -843,11 +872,11 @@ function questionnaire_get_recent_mod_activity(&$activities, &$index, $timestart
 
     if ($groupid) {
         $groupselect = 'AND gm.groupid = :groupid';
-        $groupjoin   = 'JOIN {groups_members} gm ON  gm.userid=u.id';
+        $groupjoin = 'JOIN {groups_members} gm ON  gm.userid=u.id';
         $params['groupid'] = $groupid;
     } else {
         $groupselect = '';
-        $groupjoin   = '';
+        $groupjoin = '';
     }
 
     $params['timestart'] = $timestart;
@@ -869,8 +898,8 @@ function questionnaire_get_recent_mod_activity(&$activities, &$index, $timestart
     }
 
     $accessallgroups = has_capability('moodle/site:accessallgroups', $context);
-    $viewfullnames   = has_capability('moodle/site:viewfullnames', $context);
-    $groupmode       = groups_get_activity_groupmode($cm, $course);
+    $viewfullnames = has_capability('moodle/site:viewfullnames', $context);
+    $groupmode = groups_get_activity_groupmode($cm, $course);
 
     $usersgroups = null;
     $aname = format_string($cm->name, true);
@@ -907,19 +936,19 @@ function questionnaire_get_recent_mod_activity(&$activities, &$index, $timestart
 
         $tmpactivity = new stdClass();
 
-        $tmpactivity->type       = 'questionnaire';
-        $tmpactivity->cmid       = $cm->id;
+        $tmpactivity->type = 'questionnaire';
+        $tmpactivity->cmid = $cm->id;
         $tmpactivity->cminstance = $cm->instance;
         // Current user is admin - or teacher enrolled in original public course.
         if (isset($cmoriginal)) {
             $tmpactivity->cminstance = $cmoriginal->instance;
         }
         $tmpactivity->cannotview = false;
-        $tmpactivity->anonymous  = false;
-        $tmpactivity->name       = $aname;
+        $tmpactivity->anonymous = false;
+        $tmpactivity->name = $aname;
         $tmpactivity->sectionnum = $cm->sectionnum;
-        $tmpactivity->timestamp  = $attempt->submitted;
-        $tmpactivity->groupid    = $groupid;
+        $tmpactivity->timestamp = $attempt->submitted;
+        $tmpactivity->groupid = $groupid;
         if (isset($userattempts[$attempt->lastname])) {
             $tmpactivity->nbattempts = $userattempts[$attempt->lastname];
         }
@@ -941,7 +970,7 @@ function questionnaire_get_recent_mod_activity(&$activities, &$index, $timestart
             }
         }
         if ($questionnaire->respondenttype != 'anonymous') {
-            $tmpactivity->user->fullname  = fullname($attempt, $viewfullnames);
+            $tmpactivity->user->fullname = fullname($attempt, $viewfullnames);
         } else {
             $tmpactivity->user = '';
             unset ($tmpactivity->user);
@@ -1043,9 +1072,9 @@ function questionnaire_print_overview($courses, &$htmlarray) {
     }
 
     // Get Necessary Strings.
-    $strquestionnaire       = get_string('modulename', 'questionnaire');
+    $strquestionnaire = get_string('modulename', 'questionnaire');
     $strnotattempted = get_string('noattempts', 'questionnaire');
-    $strattempted    = get_string('attempted', 'questionnaire');
+    $strattempted = get_string('attempted', 'questionnaire');
     $strsavedbutnotsubmitted = get_string('savedbutnotsubmitted', 'questionnaire');
 
     $now = time();
@@ -1069,7 +1098,7 @@ function questionnaire_print_overview($courses, &$htmlarray) {
             // Deadline.
             $str .= $OUTPUT->box(get_string('closeson', 'questionnaire', userdate($questionnaire->closedate)), 'info');
             $attempts = $DB->get_records('questionnaire_response',
-                ['questionnaireid' => $questionnaire->id, 'userid' => $USER->id, 'complete' => 'y']);
+                ['questionnaireid' => $questionnaire->id, 'userid' => $USER->id, 'complete' => 'y']) ?? [];
             $nbattempts = count($attempts);
 
             // Do not display a questionnaire as due if it can only be sumbitted once and it has already been submitted!
@@ -1192,15 +1221,13 @@ function questionnaire_reset_userdata($data) {
  * Obtains the automatic completion state for this questionnaire based on the condition
  * in questionnaire settings.
  *
- * @param stdClass $course Course
- * @param stdClass $cm Course-module
+ * @param object $cm Course-module
  * @param int $userid User ID
  * @param bool $type Type of comparison (or/and; can be used as return value if no conditions)
  * @return bool True if completed, false if not, $type if conditions not set.
  *
- * $course is unused, but API requires it. Suppress PHPMD warning.
  */
-function questionnaire_get_completion_state($course, $cm, $userid, $type) {
+function questionnaire_get_completion_state($cm, $userid, $type) {
     global $DB;
 
     // Get questionnaire details.
