@@ -22,6 +22,7 @@ use mod_questionnaire\generator\question_response,
 
 global $CFG;
 require_once($CFG->dirroot.'/mod/questionnaire/locallib.php');
+require_once($CFG->dirroot . '/mod/questionnaire/classes/question/question.php');
 
 /**
  * The mod_questionnaire data generator.
@@ -32,6 +33,11 @@ require_once($CFG->dirroot.'/mod/questionnaire/locallib.php');
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class mod_questionnaire_generator extends testing_module_generator {
+
+    /**
+     * @var int Current position of assigned options.
+     */
+    protected $curpos = 0;
 
     /**
      * @var int keep track of how many questions have been created.
@@ -77,20 +83,20 @@ class mod_questionnaire_generator extends testing_module_generator {
         $record = (object)(array)$record;
 
         $defaultquestionnairesettings = array(
-            'qtype'                 => 0,
-            'respondenttype'        => 'fullname',
-            'resp_eligible'         => 'all',
-            'resp_view'             => 0,
-            'opendate'              => 0,
-            'closedate'             => 0,
-            'resume'                => 0,
-            'navigate'              => 0,
-            'grade'                 => 0,
-            'sid'                   => 0,
-            'timemodified'          => time(),
-            'completionsubmit'      => 0,
-            'autonum'               => 3,
-            'create'                => 'new-0', // Used in form only to indicate a new, empty instance.
+            'qtype' => 0,
+            'respondenttype' => 'fullname',
+            'resp_eligible' => 'all',
+            'resp_view' => 0,
+            'opendate' => 0,
+            'closedate' => 0,
+            'resume' => 0,
+            'navigate' => 0,
+            'grade' => 0,
+            'sid' => 0,
+            'timemodified' => time(),
+            'completionsubmit' => 0,
+            'autonum' => 3,
+            'create' => 'new-0', // Used in form only to indicate a new, empty instance.
         );
 
         foreach ($defaultquestionnairesettings as $name => $value) {
@@ -102,7 +108,7 @@ class mod_questionnaire_generator extends testing_module_generator {
         $instance = parent::create_instance($record, (array)$options);
         $cm = get_coursemodule_from_instance('questionnaire', $instance->id);
         $course = get_course($cm->course);
-        $questionnaire = new questionnaire($course, $cm, 0, $instance, false);
+        $questionnaire = new \questionnaire($course, $cm, 0, $instance, false);
 
         $this->questionnaires[$instance->id] = $questionnaire;
 
@@ -214,7 +220,7 @@ class mod_questionnaire_generator extends testing_module_generator {
             $questiondata['content'] = isset($questiondata['content']) ? $questiondata['content'] : 'Test content';
             $this->create_question($questionnaire, $questiondata, $choicedata);
         }
-        $questionnaire = new questionnaire($course, $cm, $questionnaire->id, null, true);
+        $questionnaire = new \questionnaire($course, $cm, $questionnaire->id, null, true);
         return $questionnaire;
     }
 
@@ -386,6 +392,10 @@ class mod_questionnaire_generator extends testing_module_generator {
                 break;
             case QUESPAGEBREAK:
                 $qtype = 'sectionbreak';
+                break;
+            case QUESSLIDER:
+                $qtype = 'Slider';
+                break;
         }
         return $qtype;
     }
@@ -429,6 +439,10 @@ class mod_questionnaire_generator extends testing_module_generator {
                 break;
             case QUESPAGEBREAK:
                 $qtype = 'Section Break';
+                break;
+            case QUESSLIDER:
+                $qtype = 'Slider';
+                break;
         }
         return $qtype;
     }
@@ -570,8 +584,6 @@ class mod_questionnaire_generator extends testing_module_generator {
      * @param int $number
      */
     public function assign_opts($number = 5) {
-        static $curpos = 0;
-
         $opts = 'blue, red, yellow, orange, green, purple, white, black, earth, wind, fire, space, car, truck, train' .
             ', van, tram, one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve, thirteen' .
             ', fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty, happy, sad, jealous, angry';
@@ -584,10 +596,10 @@ class mod_questionnaire_generator extends testing_module_generator {
 
         $retopts = [];
         while (count($retopts) < $number) {
-            $retopts[] = $opts[$curpos];
+            $retopts[] = $opts[$this->curpos];
             $retopts = array_unique($retopts);
-            if (++$curpos == $numopts) {
-                $curpos = 0;
+            if (++$this->curpos == $numopts) {
+                $this->curpos = 0;
             }
         }
         // Return re-indexed version of array (otherwise you can get a weird index of 1,2,5,9, etc).
@@ -651,6 +663,9 @@ class mod_questionnaire_generator extends testing_module_generator {
                     }
                     $responses[] = new question_response($question->id, $answers);
                     break;
+                case QUESSLIDER :
+                    $responses[] = new question_response($question->id, 5);
+                    break;
             }
 
         }
@@ -663,21 +678,39 @@ class mod_questionnaire_generator extends testing_module_generator {
      * @param int $studentcount
      * @param int $questionnairecount
      * @param int $questionspertype
+     * @param array $profilefields in format ['<shortname>' => '<name>']
      */
     public function create_and_fully_populate($coursecount = 4, $studentcount = 20, $questionnairecount = 2,
-                                              $questionspertype = 5) {
+                                              $questionspertype = 5, $profilefields = []) {
         global $DB;
 
         $dg = $this->datagenerator;
         $qdg = $this;
 
-        $questiontypes = [QUESTEXT, QUESESSAY, QUESNUMERIC, QUESDATE, QUESRADIO, QUESDROP, QUESCHECK, QUESRATE];
+        $this->curpos = 0;
+        $questiontypes = [QUESTEXT, QUESESSAY, QUESNUMERIC, QUESDATE, QUESRADIO, QUESDROP, QUESCHECK, QUESRATE, QUESSLIDER];
         $students = [];
         $courses = [];
         $questionnaires = [];
 
+        if (!empty($profilefields)) {
+            // Create profile fields and set them to show for user identity.
+            $fields = [];
+            foreach ($profilefields as $field => $name) {
+                $dg->create_custom_profile_field(['datatype' => 'text',
+                    'shortname' => $field, 'name' => $name]);
+                $fields[] = "profile_field_{$field}";
+            }
+            set_config('showuseridentity', implode(',', $fields));
+        }
+
         for ($u = 0; $u < $studentcount; $u++) {
-            $students[] = $dg->create_user(['firstname' => 'Testy']);
+            $user = ['firstname' => 'Testy'];
+            // Set values for the profile fields.
+            foreach ($profilefields as $field => $name) {
+                $user["profile_field_{$field}"] = "{$field}{$u}";
+            }
+            $students[] = $dg->create_user($user);
         }
 
         $manplugin = enrol_get_plugin('manual');
@@ -708,8 +741,8 @@ class mod_questionnaire_generator extends testing_module_generator {
                         $questionnaire,
                         [
                             'surveyid' => $questionnaire->sid,
-                            'name'      => $qdg->type_name($questiontype),
-                            'type_id'   => QUESSECTIONTEXT
+                            'name' => $qdg->type_name($questiontype),
+                            'type_id' => QUESSECTIONTEXT
                         ]
                     );
                     // Create questions.
@@ -722,8 +755,8 @@ class mod_questionnaire_generator extends testing_module_generator {
                             $questionnaire,
                             [
                                 'surveyid' => $questionnaire->sid,
-                                'name'      => $qdg->type_name($questiontype).' '.$qname++,
-                                'type_id'   => $questiontype
+                                'name' => $qdg->type_name($questiontype).' '.$qname++,
+                                'type_id' => $questiontype
                             ],
                             $opts
                         );

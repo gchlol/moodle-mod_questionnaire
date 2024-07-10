@@ -81,7 +81,7 @@ class check extends question {
      * @return \stdClass The check question context tags.
      *
      */
-    protected function question_survey_display($response, $dependants, $blankquestionnaire=false) {
+    protected function question_survey_display($response, $dependants, $blankquestionnaire = false) {
         // Check boxes.
         $otherempty = false;
         if (!empty($response)) {
@@ -148,6 +148,9 @@ class check extends question {
                     format_string(stripslashes($response->answers[$this->id][$id]->value)) : '');
                 $checkbox->label = format_text($choice->other_choice_display().'', FORMAT_HTML, ['noclean' => true]);
             }
+            if (!empty($this->qlegend)) {
+                $checkbox->alabel = strip_tags("{$this->qlegend} {$checkbox->label}");
+            }
             $choicetags->qelements[] = (object)['choice' => $checkbox];
         }
         if ($otherempty) {
@@ -192,9 +195,33 @@ class check extends question {
                 $chobj->name = $id.$uniquetag++;
                 $chobj->content = (($othertext === '') ? $id : $othertext);
             }
+            if (!empty($this->qlegend)) {
+                $chobj->alabel = strip_tags("{$this->qlegend} {$chobj->content}");
+            }
             $resptags->choices[] = $chobj;
         }
         return $resptags;
+    }
+
+    /**
+     * Check question's form data for complete response.
+     *
+     * @param object $responsedata The data entered into the response.
+     * @return boolean
+     */
+    public function response_complete($responsedata) {
+        if (isset($responsedata->{'q'.$this->id}) && $this->required() &&
+            is_array($responsedata->{'q'.$this->id})) {
+            foreach ($responsedata->{'q' . $this->id} as $key => $choice) {
+                // If only an 'other' choice is selected and empty, question is not completed.
+                if ((strpos($key, 'o') === 0) && empty($choice)) {
+                    return false;
+                } else {
+                    return true;
+                }
+            }
+        }
+        return parent::response_complete($responsedata);
     }
 
     /**
@@ -218,16 +245,15 @@ class check extends question {
                 }
             }
         } else if (isset($responsedata->{'q'.$this->id})) {
-            foreach ($responsedata->{'q'.$this->id} as $answer) {
-                if (strpos($answer, 'other_') !== false) {
+            foreach ($responsedata->{'q'.$this->id} as $key => $answer) {
+                if (strpos($key, 'o') === 0) {
                     // ..."other" choice is checked but text box is empty.
-                    $othercontent = "q".$this->id.substr($answer, 5);
-                    if (trim($responsedata->$othercontent) == false) {
+                    $okey = substr($key, 1);
+                    if (isset($responsedata->{'q'.$this->id}[$okey]) && empty(trim($answer))) {
                         $valid = false;
                         break;
                     }
-                    $nbrespchoices++;
-                } else if (is_numeric($answer)) {
+                } else if (is_numeric($key)) {
                     $nbrespchoices++;
                 }
             }
