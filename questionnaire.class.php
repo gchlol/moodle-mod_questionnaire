@@ -3077,7 +3077,8 @@ class questionnaire {
                                        $nbinfocols,
                                        $numrespcols,
                                        $options,
-                                       $identityfields) {
+                                       $identityfields,
+                                       $hierarchyfields) {
         global $DB;
 
         // If using an anonymous response, map users to unique user numbers so that number of unique anonymous users can be seen.
@@ -3181,6 +3182,9 @@ class questionnaire {
         foreach ($identityfields as $field) {
             array_push($positioned, $resprow->$field);
         }
+        foreach ($hierarchyfields as $field) {
+            array_push($positioned, $resprow->$field);
+        }
 
         for ($c = $nbinfocols; $c < $numrespcols; $c++) {
             if (isset($row[$c])) {
@@ -3242,6 +3246,10 @@ class questionnaire {
         $identityfields = $this->get_identity_fields($options);
         foreach ($identityfields as $field) {
             $columns[] = \core_user\fields::get_display_name($field);
+        }
+        $hierarchyfields = $this->get_hierarchy_fields($options);
+        foreach ($hierarchyfields as $field) {
+            $columns[] = get_string($field, 'questionnaire');
         }
         $nbinfocols = count($columns);
 
@@ -3485,18 +3493,29 @@ class questionnaire {
                 continue;
             }
 
-            if (!empty($identityfields)) {
+            if (!empty($identityfields) || !empty($hierarchyfields)) {
                 // Get identity fields for user.
                 if (isset($useridentityfields[$responserow->userid])) {
                     $customfields = $useridentityfields[$responserow->userid];
                 } else {
                     $customfields = self::get_user_identity_fields($this->context, $responserow->userid);
+
+                    $hierarchydata = self::get_user_hierarchy($responserow->userid);
+                    if ($hierarchydata) {
+                        foreach ($hierarchydata as $field => $value) {
+                            $customfields->{$field} = $value;
+                        }
+                    }
+
                     $useridentityfields[$responserow->userid] = $customfields;
                 }
 
                 // Set profile fields for user in response row.
                 foreach ($identityfields as $field) {
                     $responserow->{$field} = $customfields->{$field};
+                }
+                foreach ($hierarchyfields as $field) {
+                    $responserow->{$field} = $customfields->{$field} ?? '';
                 }
             }
 
@@ -3516,7 +3535,7 @@ class questionnaire {
 
             if ($prevresprow !== false && $prevresprow->rid !== $rid) {
                 $output[] = $this->process_csv_row($row, $prevresprow, $currentgroupid, $questionsbyposition,
-                    $nbinfocols, $numrespcols, $options, $identityfields);
+                    $nbinfocols, $numrespcols, $options, $identityfields, $hierarchyfields);
                 $row = [];
             }
 
@@ -3598,7 +3617,7 @@ class questionnaire {
         if ($prevresprow !== false) {
             // Add final row to output. May not exist if no response data was ever present.
             $output[] = $this->process_csv_row($row, $prevresprow, $currentgroupid, $questionsbyposition,
-                $nbinfocols, $numrespcols, $options, $identityfields);
+                $nbinfocols, $numrespcols, $options, $identityfields, $hierarchyfields);
         }
 
         // Add averages row if appropriate.
@@ -4177,5 +4196,40 @@ class questionnaire {
                 WHERE u.id = ?";
         $row = $DB->get_record_sql($sql, array_merge($params, [$userid]));
         return $row;
+    }
+
+    protected function get_hierarchy_fields() {
+        return ['stream', 'division', 'unit'];
+    }
+
+    /**
+     * Gets the user's hierarchy fields from organisation hierarchy.
+     *
+     * @param int $userid The user's ID.
+     * @return stdClass|null
+     */
+    public static function get_user_hierarchy(int $userid): ?\stdClass {
+        global $DB;
+
+        $selects = "
+            assign.paydiv1name AS stream,
+            position.division1name AS division,
+            position.unitname AS unit
+        ";
+
+        $joins = "
+            JOIN {tool_organisation_assign} toa ON u.id = toa.userid
+            JOIN {tool_organisation_mtda_assi} assign ON toa.id = assign.assignid
+            JOIN {tool_organisation_mtda_pos} position ON position.positionid = toa.positionid
+        ";
+
+        $params = [];
+
+        $sql = "SELECT $selects
+                FROM {user} u
+                $joins
+                WHERE u.id = ?";
+
+        return $DB->get_record_sql($sql, array_merge($params, [$userid])) ?: null;
     }
 }
