@@ -4198,6 +4198,11 @@ class questionnaire {
         return $row;
     }
 
+    /**
+     * Gets the hierarchy fields used for organisational structure.
+     *
+     * @return array
+     */
     protected function get_hierarchy_fields() {
         return ['stream', 'division', 'unit'];
     }
